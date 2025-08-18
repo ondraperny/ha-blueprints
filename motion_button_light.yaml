@@ -1,0 +1,165 @@
+blueprint:
+  name: Motion and Button-activated Light with Brightness Ramping
+  description: Turn on a light when motion is detected or button is pressed, with gradual brightness transitions.
+  domain: automation
+  source_url: https://github.com/home-assistant/core/blob/dev/homeassistant/components/automation/blueprints/motion_light.yaml
+  author: Home Assistant (Enhanced)
+  input:
+    motion_entity:
+      name: Motion Sensor
+      selector:
+        entity:
+          filter:
+            - device_class: occupancy
+              domain: binary_sensor
+            - device_class: motion
+              domain: binary_sensor
+    
+    button_entity:
+      name: Button (Optional)
+      description: Button entity to manually trigger the light
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: button
+          multiple: false
+    
+    light_target:
+      name: Light
+      selector:
+        target:
+          entity:
+            domain: light
+    
+    no_motion_wait:
+      name: Wait time
+      description: Time to leave the light on after last motion is detected.
+      default: 120
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+    
+    target_brightness:
+      name: Target Brightness
+      description: Brightness level when turning on (0-100%)
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+    
+    ramp_up_time:
+      name: Brightness Ramp Up Time
+      description: Time to gradually increase brightness when turning on
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 30
+          unit_of_measurement: seconds
+    
+    ramp_down_time:
+      name: Brightness Ramp Down Time
+      description: Time to gradually decrease brightness when turning off
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 30
+          unit_of_measurement: seconds
+    
+    enable_ramp_up:
+      name: Enable Brightness Ramp Up
+      description: Gradually increase brightness when turning on
+      default: true
+      selector:
+        boolean:
+    
+    enable_ramp_down:
+      name: Enable Brightness Ramp Down
+      description: Gradually decrease brightness when turning off
+      default: true
+      selector:
+        boolean:
+
+# If motion is detected or button pressed within the delay,
+# we restart the script.
+mode: restart
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input motion_entity
+    from: "off"
+    to: "on"
+    id: motion_trigger
+  
+  - trigger: state
+    entity_id: !input button_entity
+    id: button_trigger
+
+conditions: []
+
+actions:
+  - alias: "Turn on the light with brightness ramping"
+    choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ states.enable_ramp_up == true }}"
+        sequence:
+          # First turn on at low brightness
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_pct: 1
+          # Then transition to target brightness
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_pct: !input target_brightness
+              transition: !input ramp_up_time
+      - conditions: []
+        sequence:
+          # Direct turn on without ramping
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_pct: !input target_brightness
+  
+  # Only wait for motion sensor to turn off (not button)
+  - alias: "Wait until there is no motion from device"
+    wait_for_trigger:
+      trigger: state
+      entity_id: !input motion_entity
+      from: "on"
+      to: "off"
+  
+  - alias: "Wait the number of seconds that has been set"
+    delay: !input no_motion_wait
+  
+  - alias: "Turn off the light with brightness ramping"
+    choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ states.enable_ramp_down == true }}"
+        sequence:
+          # First dim to low brightness
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_pct: 1
+              transition: !input ramp_down_time
+          # Then turn off
+          - delay:
+              seconds: !input ramp_down_time
+          - action: light.turn_off
+            target: !input light_target
+      - conditions: []
+        sequence:
+          # Direct turn off without ramping
+          - action: light.turn_off
+            target: !input light_target
