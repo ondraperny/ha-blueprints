@@ -28,10 +28,10 @@ blueprint:
     
     light_target:
       name: Light
+      description: Select the light entity to control (not a group or area)
       selector:
-        target:
-          entity:
-            - domain: light
+        entity:
+          domain: light
     
     no_motion_wait:
       name: Wait time
@@ -132,20 +132,20 @@ actions:
                     value_template: "{{ ramp_up_time_var > 0 }}"
                 sequence:
                   - action: light.turn_on
-                    target: !input light_target
+                    entity_id: !input light_target
                     data:
                       brightness_pct: "{{ min_brightness_var }}"
                   - delay:
                       milliseconds: 100
                   - action: light.turn_on
-                    target: !input light_target
+                    entity_id: !input light_target
                     data:
                       brightness_pct: "{{ target_brightness_var }}"
                       transition: "{{ ramp_up_time_var }}"
               - conditions: []
                 sequence:
                   - action: light.turn_on
-                    target: !input light_target
+                    entity_id: !input light_target
                     data:
                       brightness_pct: "{{ target_brightness_var }}"
           
@@ -169,18 +169,18 @@ actions:
                     value_template: "{{ ramp_down_time_var > 0 }}"
                 sequence:
                   - action: light.turn_on
-                    target: !input light_target
+                    entity_id: !input light_target
                     data:
                       brightness_pct: "{{ min_brightness_var }}"
                       transition: "{{ ramp_down_time_var }}"
                   - delay:
                       seconds: "{{ ramp_down_time_var + 0.5 }}"
                   - action: light.turn_off
-                    target: !input light_target
+                    entity_id: !input light_target
               - conditions: []
                 sequence:
                   - action: light.turn_off
-                    target: !input light_target
+                    entity_id: !input light_target
       
       # For all other triggers (or motion with toggle mode), check light state and toggle
       - conditions: []
@@ -199,20 +199,20 @@ actions:
                             value_template: "{{ ramp_up_time_var > 0 }}"
                         sequence:
                           - action: light.turn_on
-                            target: !input light_target
+                            entity_id: !input light_target
                             data:
                               brightness_pct: "{{ min_brightness_var }}"
                           - delay:
                               milliseconds: 100
                           - action: light.turn_on
-                            target: !input light_target
+                            entity_id: !input light_target
                             data:
                               brightness_pct: "{{ target_brightness_var }}"
                               transition: "{{ ramp_up_time_var }}"
                       - conditions: []
                         sequence:
                           - action: light.turn_on
-                            target: !input light_target
+                            entity_id: !input light_target
                             data:
                               brightness_pct: "{{ target_brightness_var }}"
                   
