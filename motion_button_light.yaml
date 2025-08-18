@@ -1,6 +1,6 @@
 blueprint:
-  name: Motion and Button-activated Light with Brightness Ramping
-  description: Turn on a light when motion is detected or button is pressed, with gradual brightness transitions.
+  name: Motion-activated Light with Manual Trigger and Brightness Ramping
+  description: Turn on a light when motion is detected or manual trigger is activated, with gradual brightness transitions.
   domain: automation
   source_url: https://github.com/home-assistant/core/blob/dev/homeassistant/components/automation/blueprints/motion_light.yaml
   author: Home Assistant (Enhanced)
@@ -15,15 +15,12 @@ blueprint:
             - device_class: motion
               domain: binary_sensor
     
-    button_entity:
-      name: Button (Optional)
-      description: Button entity to manually trigger the light
+    manual_trigger:
+      name: Manual Trigger (Optional)
+      description: Any trigger to manually activate the light (button press, switch toggle, scene activation, etc.)
       default: []
       selector:
-        entity:
-          filter:
-            - domain: button
-          multiple: false
+        trigger:
     
     light_target:
       name: Light
@@ -85,8 +82,18 @@ blueprint:
       default: true
       selector:
         boolean:
+    
+    min_brightness:
+      name: Minimum Brightness for Ramping
+      description: Starting/ending brightness level for ramp transitions (1-10%)
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 10
+          unit_of_measurement: "%"
 
-# If motion is detected or button pressed within the delay,
+# If motion is detected or manual trigger activated within the delay,
 # we restart the script.
 mode: restart
 max_exceeded: silent
@@ -98,39 +105,45 @@ triggers:
     to: "on"
     id: motion_trigger
   
-  - trigger: state
-    entity_id: !input button_entity
-    id: button_trigger
+  - !input manual_trigger
 
 conditions: []
+
+variables:
+  enable_ramp_up_var: !input enable_ramp_up
+  enable_ramp_down_var: !input enable_ramp_down
+  min_brightness_var: !input min_brightness
+  target_brightness_var: !input target_brightness
+  ramp_up_time_var: !input ramp_up_time
+  ramp_down_time_var: !input ramp_down_time
 
 actions:
   - alias: "Turn on the light with brightness ramping"
     choose:
       - conditions:
           - condition: template
-            value_template: "{{ states.enable_ramp_up == true }}"
+            value_template: "{{ enable_ramp_up_var == true }}"
         sequence:
-          # First turn on at low brightness
+          # First turn on at minimum brightness
           - action: light.turn_on
             target: !input light_target
             data:
-              brightness_pct: 1
+              brightness_pct: "{{ min_brightness_var }}"
           # Then transition to target brightness
           - action: light.turn_on
             target: !input light_target
             data:
-              brightness_pct: !input target_brightness
-              transition: !input ramp_up_time
+              brightness_pct: "{{ target_brightness_var }}"
+              transition: "{{ ramp_up_time_var }}"
       - conditions: []
         sequence:
           # Direct turn on without ramping
           - action: light.turn_on
             target: !input light_target
             data:
-              brightness_pct: !input target_brightness
+              brightness_pct: "{{ target_brightness_var }}"
   
-  # Only wait for motion sensor to turn off (not button)
+  # Only wait for motion sensor to turn off (not manual trigger)
   - alias: "Wait until there is no motion from device"
     wait_for_trigger:
       trigger: state
@@ -145,17 +158,18 @@ actions:
     choose:
       - conditions:
           - condition: template
-            value_template: "{{ states.enable_ramp_down == true }}"
+            value_template: "{{ enable_ramp_down_var == true }}"
         sequence:
-          # First dim to low brightness
+          # First dim to minimum brightness
           - action: light.turn_on
             target: !input light_target
             data:
-              brightness_pct: 1
-              transition: !input ramp_down_time
-          # Then turn off
+              brightness_pct: "{{ min_brightness_var }}"
+              transition: "{{ ramp_down_time_var }}"
+          # Wait for transition to complete
           - delay:
-              seconds: !input ramp_down_time
+              seconds: "{{ ramp_down_time_var }}"
+          # Then turn off
           - action: light.turn_off
             target: !input light_target
       - conditions: []
