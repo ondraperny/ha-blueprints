@@ -1,6 +1,6 @@
 blueprint:
-  name: Flexible Light Control with Motion Sensor and Manual Triggers
-  description: Turn on a light based on multiple triggers (motion sensor, buttons, switches, time, etc.) with gradual brightness transitions. Configure at least one trigger.
+  name: Smart Light Control with Motion and Toggle-Aware Manual Triggers
+  description: Turn on/off a light based on multiple triggers with smart toggle behavior. Manual triggers will toggle the light state, motion sensors always turn on.
   domain: automation
   source_url: https://github.com/home-assistant/core/blob/dev/homeassistant/components/automation/blueprints/motion_light.yaml
   author: Home Assistant (Enhanced)
@@ -8,12 +8,9 @@ blueprint:
     all_triggers:
       name: Light Triggers (Required)
       description: |
-        Add all triggers that should turn on the light. You must add at least one trigger.
-        Examples:
-        - Motion sensor: State trigger with entity_id of your motion sensor, from "off" to "on"
-        - Button press: State trigger with button entity
-        - Time trigger: Specific time of day
-        - Switch toggle: State trigger with switch entity to "on"
+        Add all triggers that should control the light. You must add at least one trigger.
+        - Motion sensors will always turn the light ON
+        - Manual triggers (buttons, switches) will TOGGLE the light ON/OFF
         Click "ADD TRIGGER" to add each trigger.
       selector:
         trigger:
@@ -34,7 +31,7 @@ blueprint:
       selector:
         target:
           entity:
-            domain: light
+            - domain: light
     
     no_motion_wait:
       name: Wait time
@@ -67,7 +64,7 @@ blueprint:
           unit_of_measurement: seconds
     
     ramp_down_time:
-      name: Brightness Ramp Down Time
+      name: Brightness Ramp Down Time  
       description: Time to gradually decrease brightness when turning off (0 to disable)
       default: 3
       selector:
@@ -85,6 +82,13 @@ blueprint:
           min: 1
           max: 10
           unit_of_measurement: "%"
+    
+    motion_triggers_always_on:
+      name: Motion Always Turns On
+      description: If enabled, motion sensors always turn lights ON. If disabled, motion sensors also toggle.
+      default: true
+      selector:
+        boolean:
 
 # If motion is detected or manual trigger activated within the delay,
 # we restart the script.
@@ -96,73 +100,213 @@ variables:
   target_brightness_var: !input target_brightness
   ramp_up_time_var: !input ramp_up_time
   ramp_down_time_var: !input ramp_down_time
+  motion_sensor: !input motion_entity_for_wait
+  motion_always_on: !input motion_triggers_always_on
+  light_entity: !input light_target
 
 triggers: !input all_triggers
 
 conditions: []
 
 actions:
-  - alias: "Turn on the light with brightness ramping"
-    choose:
-      # Ramp up if time is greater than 0
+  - choose:
+      # If this is a motion trigger AND motion_always_on is true, always turn on
       - conditions:
-          - condition: template
-            value_template: "{{ ramp_up_time_var > 0 }}"
+          - condition: and
+            conditions:
+              - condition: template
+                value_template: "{{ motion_always_on == true }}"
+              - condition: template
+                value_template: >-
+                  {{ trigger.entity_id is defined and 
+                     trigger.entity_id == motion_sensor and
+                     trigger.to_state is defined and
+                     trigger.to_state.state == 'on' }}
         sequence:
-          # First turn on at minimum brightness
-          - action: light.turn_on
-            target: !input light_target
-            data:
-              brightness_pct: "{{ min_brightness_var }}"
-          # Small delay to ensure light is on
-          - delay:
-              milliseconds: 100
-          # Then transition to target brightness
-          - action: light.turn_on
-            target: !input light_target
-            data:
-              brightness_pct: "{{ target_brightness_var }}"
-              transition: "{{ ramp_up_time_var }}"
-      # Direct turn on without ramping
+          # Motion detected - always turn on
+          - alias: "Turn on from motion"
+            choose:
+              # Ramp up if time is greater than 0
+              - conditions:
+                  - condition: template
+                    value_template: "{{ ramp_up_time_var > 0 }}"
+                sequence:
+                  - action: light.turn_on
+                    target: !input light_target
+                    data:
+                      brightness_pct: "{{ min_brightness_var }}"
+                  - delay:
+                      milliseconds: 100
+                  - action: light.turn_on
+                    target: !input light_target
+                    data:
+                      brightness_pct: "{{ target_brightness_var }}"
+                      transition: "{{ ramp_up_time_var }}"
+              - conditions: []
+                sequence:
+                  - action: light.turn_on
+                    target: !input light_target
+                    data:
+                      brightness_pct: "{{ target_brightness_var }}"
+          
+          # Wait for motion to stop
+          - alias: "Wait until there is no motion from device"
+            wait_for_trigger:
+              trigger: state
+              entity_id: !input motion_entity_for_wait
+              from: "on"
+              to: "off"
+          
+          # Wait the configured time
+          - alias: "Wait the number of seconds that has been set"
+            delay: !input no_motion_wait
+          
+          # Turn off with ramping
+          - alias: "Turn off after motion timeout"
+            choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ ramp_down_time_var > 0 }}"
+                sequence:
+                  - action: light.turn_on
+                    target: !input light_target
+                    data:
+                      brightness_pct: "{{ min_brightness_var }}"
+                      transition: "{{ ramp_down_time_var }}"
+                  - delay:
+                      seconds: "{{ ramp_down_time_var + 0.5 }}"
+                  - action: light.turn_off
+                    target: !input light_target
+              - conditions: []
+                sequence:
+                  - action: light.turn_off
+                    target: !input light_target
+      
+      # For all other triggers (or motion with toggle mode), check light state and toggle
       - conditions: []
         sequence:
-          - action: light.turn_on
-            target: !input light_target
-            data:
-              brightness_pct: "{{ target_brightness_var }}"
-  
-  # Wait for motion sensor to turn off
-  - alias: "Wait until there is no motion from device"
-    wait_for_trigger:
-      trigger: state
-      entity_id: !input motion_entity_for_wait
-      from: "on"
-      to: "off"
-  
-  - alias: "Wait the number of seconds that has been set"
-    delay: !input no_motion_wait
-  
-  - alias: "Turn off the light with brightness ramping"
-    choose:
-      # Ramp down if time is greater than 0
-      - conditions:
-          - condition: template
-            value_template: "{{ ramp_down_time_var > 0 }}"
-        sequence:
-          # First dim to minimum brightness
-          - action: light.turn_on
-            target: !input light_target
-            data:
-              brightness_pct: "{{ min_brightness_var }}"
-              transition: "{{ ramp_down_time_var }}"
-          # Wait for transition to complete
-          - delay:
-              seconds: "{{ ramp_down_time_var + 0.5 }}"
-          # Then turn off
-          - action: light.turn_off
-            target: !input light_target
-      # Direct turn off without ramping
-      - conditions: []
-        sequence:
-          - action: light.turn_off
-            target: !input light_target
+          - choose:
+              # Light is currently OFF - turn it ON
+              - conditions:
+                  - condition: state
+                    entity_id: !input light_target
+                    state: "off"
+                sequence:
+                  - alias: "Toggle - Turn on"
+                    choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ ramp_up_time_var > 0 }}"
+                        sequence:
+                          - action: light.turn_on
+                            target: !input light_target
+                            data:
+                              brightness_pct: "{{ min_brightness_var }}"
+                          - delay:
+                              milliseconds: 100
+                          - action: light.turn_on
+                            target: !input light_target
+                            data:
+                              brightness_pct: "{{ target_brightness_var }}"
+                              transition: "{{ ramp_up_time_var }}"
+                      - conditions: []
+                        sequence:
+                          - action: light.turn_on
+                            target: !input light_target
+                            data:
+                              brightness_pct: "{{ target_brightness_var }}"
+                  
+                  # Only wait for motion if this was triggered by motion sensor
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: >-
+                              {{ trigger.entity_id is defined and 
+                                 trigger.entity_id == motion_sensor }}
+                        sequence:
+                          - alias: "Wait until there is no motion from device"
+                            wait_for_trigger:
+                              trigger: state
+                              entity_id: !input motion_entity_for_wait
+                              from: "on"
+                              to: "off"
+                          - alias: "Wait the number of seconds that has been set"
+                            delay: !input no_motion_wait
+                          - alias: "Turn off after timeout"
+                            choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ ramp_down_time_var > 0 }}"
+                                sequence:
+                                  - action: light.turn_on
+                                    target: !input light_target
+                                    data:
+                                      brightness_pct: "{{ min_brightness_var }}"
+                                      transition: "{{ ramp_down_time_var }}"
+                                  - delay:
+                                      seconds: "{{ ramp_down_time_var + 0.5 }}"
+                                  - action: light.turn_off
+                                    target: !input light_target
+                              - conditions: []
+                                sequence:
+                                  - action: light.turn_off
+                                    target: !input light_target
+                      # For manual triggers, also start the motion-based timer if motion is currently detected
+                      - conditions:
+                          - condition: state
+                            entity_id: !input motion_entity_for_wait
+                            state: "on"
+                        sequence:
+                          - alias: "Wait until there is no motion from device"
+                            wait_for_trigger:
+                              trigger: state
+                              entity_id: !input motion_entity_for_wait
+                              from: "on"
+                              to: "off"
+                          - alias: "Wait the number of seconds that has been set"
+                            delay: !input no_motion_wait
+                          - alias: "Turn off after timeout"
+                            choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ ramp_down_time_var > 0 }}"
+                                sequence:
+                                  - action: light.turn_on
+                                    target: !input light_target
+                                    data:
+                                      brightness_pct: "{{ min_brightness_var }}"
+                                      transition: "{{ ramp_down_time_var }}"
+                                  - delay:
+                                      seconds: "{{ ramp_down_time_var + 0.5 }}"
+                                  - action: light.turn_off
+                                    target: !input light_target
+                              - conditions: []
+                                sequence:
+                                  - action: light.turn_off
+                                    target: !input light_target
+              
+              # Light is currently ON - turn it OFF immediately
+              - conditions:
+                  - condition: state
+                    entity_id: !input light_target
+                    state: "on"
+                sequence:
+                  - alias: "Toggle - Turn off"
+                    choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ ramp_down_time_var > 0 }}"
+                        sequence:
+                          - action: light.turn_on
+                            target: !input light_target
+                            data:
+                              brightness_pct: "{{ min_brightness_var }}"
+                              transition: "{{ ramp_down_time_var }}"
+                          - delay:
+                              seconds: "{{ ramp_down_time_var + 0.5 }}"
+                          - action: light.turn_off
+                            target: !input light_target
+                      - conditions: []
+                        sequence:
+                          - action: light.turn_off
+                            target: !input light_target
